@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Advent drawing</title>
+<style>
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; padding: 16px; min-height: 100vh; background: #111; color: #fff;
+         font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; }
+  h1 { font-size: 22px; margin: 8px 0 4px; }
+  .hint { margin: 0 0 12px; font-size: 14px; color: #ccc; text-align: center; max-width: 420px; }
+  #name { width: 100%; max-width: 420px; padding: 12px; margin-bottom: 12px; font-size: 16px;
+          border-radius: 8px; border: 1px solid #555; background: #222; color: #fff; }
+  .frame { position: relative; width: 100%; max-width: 420px; aspect-ratio: 1 / 1;
+           background: #222; border-radius: 8px; overflow: hidden; }
+  .frame video, .frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .guide { position: absolute; inset: 0; border: 4px solid #fff; border-radius: 8px; pointer-events: none; }
+  #status { min-height: 22px; margin: 10px 0; font-size: 14px; text-align: center; max-width: 420px; }
+  .btn { width: 100%; max-width: 420px; padding: 14px; margin-top: 8px; font-size: 16px; border-radius: 10px;
+         border: 0; background: #fff; color: #111; font-weight: 600; text-align: center; cursor: pointer; display: block; }
+  .btn.secondary { background: #333; color: #fff; }
+  #file { display: none; }
+</style>
+</head>
+<body>
+  <h1>Draw yourself!</h1>
+  <p class="hint">Hold your phone above your drawing and line up the edges of your paper with the white frame. Then tap the button.</p>
+
+  <input id="name" type="text" placeholder="Your name" autocomplete="name">
+
+  <div class="frame">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="preview" hidden></canvas>
+    <div class="guide"></div>
+  </div>
+
+  <div id="status"></div>
+
+  <button id="snap" class="btn">Take photo</button>
+  <button id="flip" class="btn secondary">Flip camera</button>
+  <button id="send" class="btn" hidden>Send to the calendar</button>
+  <button id="retake" class="btn secondary" hidden>Retake</button>
+  <label id="fallback" class="btn" hidden>Take photo with your camera app
+    <input id="file" type="file" accept="image/*" capture="environment">
+  </label>
+
+<script>
+  const ENDPOINT = "https://script.google.com/macros/s/AKfycbw8NwTGvfilbn9RpjNUaiBSfSf8psDU9lpX06hd5rMxFiJhNQgGUXgNGGlsZLebGrIf/exec";
+  const SIZE = 1080;
+
+  const video = document.getElementById("video");
+  const preview = document.getElementById("preview");
+  const snap = document.getElementById("snap");
+  const flip = document.getElementById("flip");
+  const send = document.getElementById("send");
+  const retake = document.getElementById("retake");
+  const fallback = document.getElementById("fallback");
+  const fileInput = document.getElementById("file");
+  const statusEl = document.getElementById("status");
+  const nameInput = document.getElementById("name");
+
+  let stream = null;
+  let facing = "environment";
+
+  function setStatus(text) { statusEl.textContent = text; }
+
+  function show(mode) {
+    video.hidden = mode !== "live";
+    preview.hidden = mode !== "review";
+    snap.hidden = mode !== "live";
+    flip.hidden = mode !== "live";
+    send.hidden = mode !== "review";
+    retake.hidden = mode !== "review";
+    fallback.hidden = mode !== "nocamera";
+  }
+
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  }
+
+  async function startCamera() {
+    stopCamera();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1920 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      setStatus("");
+      show("live");
+    } catch (e) {
+      setStatus("The camera didn't open. Use the button below to take the photo with your camera app instead.");
+      show("nocamera");
+    }
+  }
+
+  // Centre square crop of any image or video frame, scaled to SIZE x SIZE
+  function drawSquare(source, w, h) {
+    const side = Math.min(w, h);
+    const sx = (w - side) / 2;
+    const sy = (h - side) / 2;
+    preview.width = SIZE;
+    preview.height = SIZE;
+    preview.getContext("2d").drawImage(source, sx, sy, side, side, 0, 0, SIZE, SIZE);
+  }
+
+  snap.addEventListener("click", () => {
+    if (!video.videoWidth) return;
+    drawSquare(video, video.videoWidth, video.videoHeight);
+    setStatus("");
+    show("review");
+  });
+
+  flip.addEventListener("click", () => {
+    facing = facing === "environment" ? "user" : "environment";
+    startCamera();
+  });
+
+  retake.addEventListener("click", () => {
+    setStatus("");
+    if (stream) show("live"); else startCamera();
+  });
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    } catch (e) {
+      bitmap = await createImageBitmap(file);
+    }
+    drawSquare(bitmap, bitmap.width, bitmap.height);
+    setStatus("The picture was cropped to a square from the middle.");
+    show("review");
+    fileInput.value = "";
+  });
+
+  send.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    if (!name) { setStatus("Please type your name first."); nameInput.focus(); return; }
+    send.disabled = true;
+    setStatus("Sending...");
+    try {
+      const base64 = preview.toDataURL("image/jpeg", 0.9).split(",")[1];
+      const response = await fetch(ENDPOINT, {
+        method: "POST",
+        body: JSON.stringify({ name: name, image: base64 })
+      });
+      const result = await response.json();
+      if (!result.ok) throw new Error(result.error || "Upload failed");
+      setStatus("Thank you! Your drawing was sent.");
+      send.hidden = true;
+      retake.textContent = "Send another";
+    } catch (e) {
+      setStatus("Sending failed. Check your internet and try again.");
+    }
+    send.disabled = false;
+  });
+
+  startCamera();
+</script>
+</body>
+</html>
