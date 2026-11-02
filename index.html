@@ -11,7 +11,7 @@
          font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; }
   h1 { font-size: 22px; margin: 8px 0 4px; }
   .hint { margin: 0 0 12px; font-size: 14px; color: #ccc; text-align: center; max-width: 420px; }
-  #name { width: 100%; max-width: 420px; padding: 12px; margin-bottom: 12px; font-size: 16px;
+  #name, #password { width: 100%; max-width: 420px; padding: 12px; margin-bottom: 12px; font-size: 16px;
           border-radius: 8px; border: 1px solid #555; background: #222; color: #fff; }
   .frame { position: relative; width: 100%; max-width: 420px; aspect-ratio: 1 / 1;
            background: #222; border-radius: 8px; overflow: hidden; }
@@ -29,6 +29,7 @@
   <p class="hint">Hold your phone above your drawing and line up the edges of your paper with the white frame. Then tap the button.</p>
 
   <input id="name" type="text" placeholder="Your name" autocomplete="name">
+  <input id="password" type="password" placeholder="Password" autocomplete="off" autocapitalize="none">
 
   <div class="frame">
     <video id="video" playsinline muted autoplay></video>
@@ -60,6 +61,7 @@
   const fileInput = document.getElementById("file");
   const statusEl = document.getElementById("status");
   const nameInput = document.getElementById("name");
+  const passwordInput = document.getElementById("password");
 
   let stream = null;
   let facing = "environment";
@@ -142,13 +144,14 @@
   send.addEventListener("click", async () => {
     const name = nameInput.value.trim();
     if (!name) { setStatus("Please type your name first."); nameInput.focus(); return; }
+    if (!passwordInput.value.trim()) { setStatus("Please type the password first."); passwordInput.focus(); return; }
     send.disabled = true;
     setStatus("Sending...");
     try {
       const base64 = preview.toDataURL("image/jpeg", 0.9).split(",")[1];
       const response = await fetch(ENDPOINT, {
         method: "POST",
-        body: JSON.stringify({ name: name, image: base64 })
+        body: JSON.stringify({ name: name, password: passwordInput.value, image: base64 })
       });
       const result = await response.json();
       if (!result.ok) throw new Error(result.error || "Upload failed");
@@ -156,7 +159,7 @@
       send.hidden = true;
       retake.textContent = "Send another";
     } catch (e) {
-      setStatus("Sending failed. Check your internet and try again.");
+      setStatus(e.message === "Wrong password" ? "That password isn't right. Check the invitation and try again." : "Sending failed. Check your internet and try again.");
     }
     send.disabled = false;
   });
